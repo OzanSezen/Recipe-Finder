@@ -6,6 +6,8 @@ import javax.swing.JPanel;
 import javax.swing.SwingConstants;
 
 import java.awt.BorderLayout;
+import java.awt.FlowLayout;
+import java.io.Serial;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -13,7 +15,6 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Consumer;
-import java.io.Serial;
 
 /** Displays and changes the selected Monday-to-Sunday week. */
 public final class DateSelectorPanel extends JPanel {
@@ -24,8 +25,15 @@ public final class DateSelectorPanel extends JPanel {
     private static final DateTimeFormatter DATE_FORMAT =
             DateTimeFormatter.ofPattern("d MMM uuuu", Locale.ENGLISH);
 
-    private final JButton previousButton = new JButton("Previous week");
-    private final JButton nextButton = new JButton("Next week");
+    private final JButton previousButton =
+            new JButton("Previous week");
+
+    private final JButton nextButton =
+            new JButton("Next week");
+
+    private final JButton reloadButton =
+            new JButton("Reload");
+
     private final JLabel weekLabel =
             new JLabel("", SwingConstants.CENTER);
 
@@ -43,15 +51,25 @@ public final class DateSelectorPanel extends JPanel {
         setLayout(new BorderLayout(16, 0));
         setOpaque(false);
 
+        JPanel rightButtons =
+                new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+
+        rightButtons.setOpaque(false);
+        rightButtons.add(reloadButton);
+        rightButtons.add(nextButton);
+
         add(previousButton, BorderLayout.WEST);
         add(weekLabel, BorderLayout.CENTER);
-        add(nextButton, BorderLayout.EAST);
+        add(rightButtons, BorderLayout.EAST);
 
         previousButton.addActionListener(
                 event -> changeWeek(weekStart.minusWeeks(1)));
 
         nextButton.addActionListener(
                 event -> changeWeek(weekStart.plusWeeks(1)));
+
+        reloadButton.addActionListener(
+                event -> this.weekChangeListener.accept(weekStart));
 
         showWeek(initialDate);
     }
@@ -76,6 +94,7 @@ public final class DateSelectorPanel extends JPanel {
     public void setBusy(boolean busy) {
         previousButton.setEnabled(!busy);
         nextButton.setEnabled(!busy);
+        reloadButton.setEnabled(!busy);
     }
 
     private void changeWeek(LocalDate date) {

@@ -1,8 +1,15 @@
 package com.recipefinder.ui.preview;
 
+import com.recipefinder.entities.UserId;
+import com.recipefinder.frameworks_drivers.persistence.json.JsonMealPlanRepository;
+import com.recipefinder.frameworks_drivers.session.InMemorySessionManager;
+import com.recipefinder.frameworks_drivers.ui.SwingUiDispatcher;
 import com.recipefinder.interface_adapters.viewmodels.MealPlanViewModel;
+import com.recipefinder.interfaces.MealPlanRepository;
+import com.recipefinder.interfaces.MealPlanSession;
+import com.recipefinder.interfaces.SessionManager;
+import com.recipefinder.ui.WeeklyPlannerCoordinator;
 import com.recipefinder.ui.views.WeeklyPlannerView;
-import com.recipefinder.usecases.mealplan.common.MealPlanData;
 
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
@@ -11,12 +18,14 @@ import javax.swing.WindowConstants;
 import java.awt.Dimension;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.nio.file.Path;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.temporal.TemporalAdjusters;
-import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-/** Development-only launcher for inspecting the weekly Swing layout. */
+/** Development launcher using isolated preview data and JSON storage. */
 public final class WeeklyPlannerPreview {
 
     private static final String PREVIEW_USER_ID = "ui-preview";
@@ -33,16 +42,55 @@ public final class WeeklyPlannerPreview {
         LocalDate monday = LocalDate.now().with(
                 TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
 
+        Path storageFile = Path.of(
+                "data",
+                "weekly-preview",
+                "meal-plans.json").toAbsolutePath();
+
+        System.out.println(
+                "Weekly preview storage: " + storageFile);
+
+        MealPlanRepository repository =
+                new JsonMealPlanRepository(storageFile);
+
+        // Development session only. The real application will supply
+        // the session established by its login use case.
+        SessionManager sessionManager =
+                new InMemorySessionManager();
+
+        sessionManager.startSession(
+                new UserId(PREVIEW_USER_ID));
+
+        MealPlanSession mealPlanSession =
+                sessionManager::getCurrentUserId;
+
         MealPlanViewModel viewModel = new MealPlanViewModel();
         viewModel.bindUser(PREVIEW_USER_ID);
+
+        ExecutorService worker =
+                Executors.newSingleThreadExecutor(task -> {
+                    Thread thread =
+                            new Thread(task, "weekly-schedule-worker");
+
+                    thread.setDaemon(true);
+                    return thread;
+                });
+
+        WeeklyPlannerCoordinator coordinator =
+                new WeeklyPlannerCoordinator(
+                        repository,
+                        mealPlanSession,
+                        viewModel,
+                        new SwingUiDispatcher(),
+                        worker);
 
         WeeklyPlannerView view = new WeeklyPlannerView(
                 viewModel,
                 monday,
-                week -> loadEmptyPreviewWeek(viewModel, week));
+                coordinator::loadWeek);
 
         JFrame frame =
-                new JFrame("Recipe Finder - Weekly UI preview");
+                new JFrame("Recipe Finder - Weekly JSON preview");
 
         frame.setDefaultCloseOperation(
                 WindowConstants.DISPOSE_ON_CLOSE);
@@ -56,32 +104,16 @@ public final class WeeklyPlannerPreview {
             @Override
             public void windowClosed(WindowEvent event) {
                 view.close();
+
+                // Invalidate any results still waiting to reach the UI.
+                viewModel.bindUser(null);
+                sessionManager.endSession();
+
+                worker.shutdownNow();
             }
         });
 
-        loadEmptyPreviewWeek(viewModel, monday);
         frame.setVisible(true);
-    }
-
-    private static void loadEmptyPreviewWeek(
-            MealPlanViewModel viewModel,
-            LocalDate monday) {
-
-        long requestId = viewModel.beginLoad(monday);
-
-        if (requestId == MealPlanViewModel.NO_REQUEST) {
-            return;
-        }
-
-        MealPlanData previewPlan = new MealPlanData(
-                PREVIEW_USER_ID,
-                monday,
-                0,
-                List.of());
-
-        viewModel.acceptPlan(
-                requestId,
-                previewPlan,
-                "UI preview: changes are not saved.");
+        coordinator.loadWeek(monday);
     }
 }
