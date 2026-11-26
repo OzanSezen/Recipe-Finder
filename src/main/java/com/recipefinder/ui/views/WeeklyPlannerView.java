@@ -7,6 +7,7 @@ import com.recipefinder.ui.components.DateSelectorPanel;
 import com.recipefinder.ui.components.MealSlotPanel;
 import com.recipefinder.usecases.mealplan.common.MealPlanFailure.Code;
 import com.recipefinder.usecases.mealplan.common.PlannedDinnerData;
+import com.recipefinder.frameworks_drivers.images.RecipeDisplayLoader;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultComboBoxModel;
@@ -99,7 +100,7 @@ public final class WeeklyPlannerView extends JPanel
         setLayout(new BorderLayout(0, 20));
         setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
         setBackground(new Color(246, 248, 250));
-        setPreferredSize(new Dimension(1140, 490));
+        setPreferredSize(new Dimension(1140, 620));
 
         JLabel title = new JLabel("Weekly dinner schedule");
         title.setFont(title.getFont().deriveFont(Font.BOLD, 25f));
@@ -427,6 +428,22 @@ public final class WeeklyPlannerView extends JPanel
         } else {
             SwingUtilities.invokeLater(action);
         }
+    }
+
+    /** Supplies the display loader to all seven dinner cards. */
+    public void setRecipeDisplayLoader(
+            RecipeDisplayLoader recipeDisplayLoader) {
+
+        Objects.requireNonNull(
+                recipeDisplayLoader, "recipeDisplayLoader");
+
+        onUiThread(() -> {
+            for (MealSlotPanel slot : slots) {
+                slot.setRecipeDisplayLoader(recipeDisplayLoader);
+            }
+
+            render();
+        });
     }
 
     @Override
