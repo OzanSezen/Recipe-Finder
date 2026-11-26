@@ -150,13 +150,68 @@ public final class WeeklyPlannerView extends JPanel
         render();
     }
 
-    /** Supplies a successfully loaded favorites list for one account. */
+    /** Updates favorites while preserving a selection that still exists. */
     public void setSavedRecipes(
             String userId,
             List<SavedRecipeOption> recipes) {
 
         Objects.requireNonNull(userId, "userId");
+
         List<SavedRecipeOption> options = List.copyOf(recipes);
+
+        onUiThread(() -> {
+            if (!Objects.equals(
+                    userId, viewModel.getState().userId())) {
+                return;
+            }
+
+            SavedRecipeOption previousSelection =
+                    Objects.equals(recipeOptionsUserId, userId)
+                            ? (SavedRecipeOption)
+                            recipePicker.getSelectedItem()
+                            : null;
+
+            DefaultComboBoxModel<SavedRecipeOption> choices =
+                    new DefaultComboBoxModel<>();
+
+            SavedRecipeOption matchingSelection = null;
+
+            for (SavedRecipeOption option : options) {
+                choices.addElement(option);
+
+                if (previousSelection != null
+                        && option.provider().equals(
+                        previousSelection.provider())
+                        && option.id().equals(
+                        previousSelection.id())) {
+
+                    matchingSelection = option;
+                }
+            }
+
+            if (matchingSelection != null) {
+                choices.setSelectedItem(matchingSelection);
+            }
+
+            recipeOptionsUserId = userId;
+            recipePicker.setModel(choices);
+
+            favoritesStatusLabel.setText(
+                    options.isEmpty()
+                            ? "No saved recipes. Save a recipe first."
+                            : options.size()
+                            + " saved recipes available.");
+
+            favoritesStatusLabel.setForeground(
+                    new Color(80, 90, 100));
+
+            render();
+        });
+    }
+
+    /** Shows a favorites refresh without discarding current choices. */
+    public void showSavedRecipesLoading(String userId) {
+        Objects.requireNonNull(userId, "userId");
 
         onUiThread(() -> {
             if (!Objects.equals(
@@ -166,19 +221,8 @@ public final class WeeklyPlannerView extends JPanel
 
             recipeOptionsUserId = userId;
 
-            DefaultComboBoxModel<SavedRecipeOption> choices =
-                    new DefaultComboBoxModel<>();
-
-            for (SavedRecipeOption option : options) {
-                choices.addElement(option);
-            }
-
-            recipePicker.setModel(choices);
-
             favoritesStatusLabel.setText(
-                    options.isEmpty()
-                            ? "No saved recipes. Save a recipe first."
-                            : options.size() + " saved recipes available.");
+                    "Loading saved recipes...");
 
             favoritesStatusLabel.setForeground(
                     new Color(80, 90, 100));
@@ -428,6 +472,11 @@ public final class WeeklyPlannerView extends JPanel
         } else {
             SwingUtilities.invokeLater(action);
         }
+    }
+
+    /** Returns the Monday currently displayed by the week selector. */
+    public LocalDate getSelectedWeek() {
+        return weekSelector.getWeekStart();
     }
 
     /** Supplies the display loader to all seven dinner cards. */

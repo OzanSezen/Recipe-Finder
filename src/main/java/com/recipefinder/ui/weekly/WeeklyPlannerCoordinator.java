@@ -1,4 +1,4 @@
-package com.recipefinder.ui;
+package com.recipefinder.ui.weekly;
 
 import com.recipefinder.interface_adapters.UiDispatcher;
 import com.recipefinder.interface_adapters.controllers.DinnerAssignmentRequest;

@@ -4,42 +4,34 @@ import com.recipefinder.entities.FavoriteCollection;
 import com.recipefinder.entities.RecipeKey;
 import com.recipefinder.entities.UserId;
 import com.recipefinder.frameworks_drivers.api.themealdb.TheMealDBRecipeGateway;
-import com.recipefinder.frameworks_drivers.images.RecipeDisplayLoader;
 import com.recipefinder.frameworks_drivers.persistence.json.JsonMealPlanRepository;
 import com.recipefinder.frameworks_drivers.session.InMemorySessionManager;
-import com.recipefinder.frameworks_drivers.ui.SwingUiDispatcher;
-import com.recipefinder.interface_adapters.viewmodels.MealPlanViewModel;
 import com.recipefinder.interfaces.MealPlanRepository;
 import com.recipefinder.interfaces.MealPlanSession;
-import com.recipefinder.interfaces.RecipeGateway;
 import com.recipefinder.interfaces.SavedRecipeLookup;
 import com.recipefinder.interfaces.SessionManager;
-import com.recipefinder.ui.WeeklyPlannerCoordinator;
-import com.recipefinder.ui.views.WeeklyPlannerView;
-import com.recipefinder.ui.views.WeeklyPlannerView.SavedRecipeOption;
+import com.recipefinder.ui.weekly.WeeklyPlannerFactory;
+import com.recipefinder.ui.weekly.WeeklyPlannerFeature;
 
+import javax.swing.JButton;
 import javax.swing.JFrame;
+import javax.swing.JPanel;
+import javax.swing.JToggleButton;
 import javax.swing.SwingUtilities;
 import javax.swing.WindowConstants;
 
+import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.nio.file.Path;
-import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.time.temporal.TemporalAdjusters;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Development launcher with preview favorites, real recipe details,
- * and isolated JSON meal-plan storage.
- */
+/** Development launcher for the reusable weekly scheduling feature. */
 public final class WeeklyPlannerPreview {
 
     private static final String PREVIEW_USER_ID = "ui-preview";
@@ -53,9 +45,6 @@ public final class WeeklyPlannerPreview {
     }
 
     private static void showWindow() {
-        LocalDate monday = LocalDate.now().with(
-                TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-
         Path storageFile = Path.of(
                 "data",
                 "weekly-preview",
@@ -77,79 +66,97 @@ public final class WeeklyPlannerPreview {
         MealPlanSession mealPlanSession =
                 sessionManager::getCurrentUserId;
 
-        MealPlanViewModel viewModel = new MealPlanViewModel();
-        viewModel.bindUser(PREVIEW_USER_ID);
+        List<RecipeKey> previewKeys = List.of(
+                new RecipeKey("themealdb", "52772"),
+                new RecipeKey("themealdb", "52795"));
 
-        // Development favorites until real favorites are integrated.
-        RecipeKey firstRecipe =
-                new RecipeKey("themealdb", "52772");
+        AtomicReference<FavoriteCollection> previewFavorites =
+                new AtomicReference<>(
+                        new FavoriteCollection(
+                                previewUser,
+                                Set.copyOf(previewKeys)));
 
-        RecipeKey secondRecipe =
-                new RecipeKey("themealdb", "52795");
+        SavedRecipeLookup savedRecipeLookup = (userId, recipeKey) -> {
+            FavoriteCollection favorites = previewFavorites.get();
 
-        FavoriteCollection previewFavorites =
-                new FavoriteCollection(
-                        previewUser,
-                        Set.of(firstRecipe, secondRecipe));
+            return favorites.userId().equals(userId)
+                    && favorites.contains(recipeKey);
+        };
 
-        SavedRecipeLookup savedRecipeLookup = (userId, recipeKey) ->
-                previewFavorites.userId().equals(userId)
-                        && previewFavorites.contains(recipeKey);
-
-        // Scheduling and JSON work use their own worker.
-        ExecutorService worker =
-                Executors.newSingleThreadExecutor(task -> {
-                    Thread thread =
-                            new Thread(task, "weekly-schedule-worker");
-
-                    thread.setDaemon(true);
-                    return thread;
-                });
-
-        // API and photo downloads cannot delay JSON saves.
-        ExecutorService displayWorker =
-                Executors.newFixedThreadPool(2, task -> {
-                    Thread thread =
-                            new Thread(task, "weekly-recipe-display-worker");
-
-                    thread.setDaemon(true);
-                    return thread;
-                });
-
-        SwingUiDispatcher uiDispatcher =
-                new SwingUiDispatcher();
-
-        RecipeGateway recipeGateway =
-                new TheMealDBRecipeGateway();
-
-        RecipeDisplayLoader displayLoader =
-                new RecipeDisplayLoader(
-                        recipeGateway,
-                        uiDispatcher,
-                        displayWorker);
-
-        WeeklyPlannerCoordinator coordinator =
-                new WeeklyPlannerCoordinator(
+        WeeklyPlannerFeature feature =
+                WeeklyPlannerFactory.create(
                         repository,
                         mealPlanSession,
-                        viewModel,
-                        uiDispatcher,
-                        worker,
-                        savedRecipeLookup);
+                        savedRecipeLookup,
+                        new TheMealDBRecipeGateway(),
+                        LocalDate.now());
 
-        WeeklyPlannerView view = new WeeklyPlannerView(
-                viewModel,
-                monday,
-                coordinator::loadWeek,
-                coordinator::removeDinner,
-                coordinator::assignDinner);
+        JButton reloadFavorites =
+                new JButton("Reload favorites");
 
-        view.setRecipeDisplayLoader(displayLoader);
+        JToggleButton emptyFavorites =
+                new JToggleButton("Empty favorites");
 
-        loadRecipeOptions(
-                view,
-                displayLoader,
-                List.of(firstRecipe, secondRecipe));
+        JButton sessionButton =
+                new JButton("Sign out");
+
+        reloadFavorites.addActionListener(event ->
+                supplyPreviewFavorites(
+                        feature,
+                        previewFavorites.get()));
+
+        emptyFavorites.addActionListener(event -> {
+            Set<RecipeKey> keys = emptyFavorites.isSelected()
+                    ? Set.of()
+                    : Set.copyOf(previewKeys);
+
+            FavoriteCollection updatedFavorites =
+                    new FavoriteCollection(previewUser, keys);
+
+            previewFavorites.set(updatedFavorites);
+
+            supplyPreviewFavorites(
+                    feature,
+                    updatedFavorites);
+        });
+
+        sessionButton.addActionListener(event -> {
+            boolean signedIn =
+                    sessionManager.getCurrentUserId().isPresent();
+
+            if (signedIn) {
+                sessionManager.endSession();
+            } else {
+                sessionManager.startSession(previewUser);
+            }
+
+            feature.sessionChanged();
+
+            boolean nowSignedIn =
+                    sessionManager.getCurrentUserId().isPresent();
+
+            sessionButton.setText(
+                    nowSignedIn
+                            ? "Sign out"
+                            : "Sign in preview");
+
+            if (nowSignedIn) {
+                supplyPreviewFavorites(
+                        feature,
+                        previewFavorites.get());
+            }
+        });
+
+        JPanel developmentControls =
+                new JPanel(new FlowLayout(FlowLayout.LEFT));
+
+        developmentControls.add(reloadFavorites);
+        developmentControls.add(emptyFavorites);
+        developmentControls.add(sessionButton);
+
+        JPanel content = new JPanel(new BorderLayout());
+        content.add(developmentControls, BorderLayout.NORTH);
+        content.add(feature.getView(), BorderLayout.CENTER);
 
         JFrame frame = new JFrame(
                 "Recipe Finder - Weekly development preview");
@@ -157,54 +164,42 @@ public final class WeeklyPlannerPreview {
         frame.setDefaultCloseOperation(
                 WindowConstants.DISPOSE_ON_CLOSE);
 
-        frame.setContentPane(view);
+        frame.setContentPane(content);
         frame.pack();
-        frame.setMinimumSize(new Dimension(1050, 560));
+        frame.setMinimumSize(new Dimension(1050, 600));
         frame.setLocationRelativeTo(null);
 
         frame.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosed(WindowEvent event) {
-                view.close();
-                displayLoader.close();
+                feature.close();
 
-                viewModel.bindUser(null);
+                // This launcher owns its development session.
                 sessionManager.endSession();
-
-                worker.shutdownNow();
-                displayWorker.shutdownNow();
             }
         });
 
         frame.setVisible(true);
-        coordinator.loadWeek(monday);
+
+        feature.open();
+
+        supplyPreviewFavorites(
+                feature,
+                previewFavorites.get());
     }
 
-    private static void loadRecipeOptions(
-            WeeklyPlannerView view,
-            RecipeDisplayLoader displayLoader,
-            List<RecipeKey> recipeKeys) {
+    private static void supplyPreviewFavorites(
+            WeeklyPlannerFeature feature,
+            FavoriteCollection favorites) {
 
-        List<SavedRecipeOption> options = new ArrayList<>();
+        long requestId = feature.beginSavedRecipesLoad();
 
-        for (RecipeKey key : recipeKeys) {
-            displayLoader.load(key, display -> {
-                // These callbacks run on Swing's event thread.
-                options.add(new SavedRecipeOption(
-                        key.getProvider(),
-                        key.getId(),
-                        display.title()));
-
-                if (options.size() == recipeKeys.size()) {
-                    options.sort(
-                            Comparator.comparing(
-                                    SavedRecipeOption::title));
-
-                    view.setSavedRecipes(
-                            PREVIEW_USER_ID,
-                            List.copyOf(options));
-                }
-            });
+        if (requestId == WeeklyPlannerFeature.NO_FAVORITES_REQUEST) {
+            return;
         }
+
+        feature.acceptSavedRecipeKeys(
+                requestId,
+                List.copyOf(favorites.recipeKeys()));
     }
 }
